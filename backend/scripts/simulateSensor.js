@@ -30,12 +30,29 @@ async function postJson(url, body) {
   }
 }
 
+async function waitForBackend(retries = 10) {
+  while (retries > 0) {
+    try {
+      await fetch(`${process.env.API_BASE_URL}/healthz`);
+      console.log("Backend is ready");
+      return;
+    } catch (e) {
+      console.log("Waiting for backend...");
+      await new Promise((r) => setTimeout(r, 2000));
+      retries--;
+    }
+  }
+  throw new Error("Backend not reachable");
+}
+
 async function main() {
   const apiBase = (process.env.API_BASE_URL || "http://localhost:8080").replace(
     /\/$/,
     "",
   );
   const endpoint = `${apiBase}/api/speeds`;
+
+  await waitForBackend();
 
   const maxSpeed = Number(process.env.SIM_MAX_SPEED_MPS || 28); // ~100 km/h
   const accel = Number(process.env.SIM_ACCEL_MPS2 || 1.6);
