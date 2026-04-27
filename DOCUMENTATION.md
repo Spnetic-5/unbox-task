@@ -1,6 +1,7 @@
 # Speedometer Realtime App — Detailed Documentation
 
 This repository implements a full-stack “speedometer” demo:
+
 - **Speed samples** are stored as a **time series** (1 row per second) in **Postgres**.
 - The **UI updates in real time** as new samples are inserted into the DB.
 
@@ -55,16 +56,21 @@ flowchart LR
   ui -->|"GET /api/speeds?since=..."| backend
 ```
 
+
+
 ### Key design choice: DB-driven realtime
+
 The requirement is “update in real time as sensor data is inserted in DB”.
 
 To ensure that *any* insert (even if it comes from outside the backend) triggers UI updates:
+
 - Postgres has an **AFTER INSERT trigger** on `speed_samples`
 - The trigger emits a `NOTIFY speed_insert` with the newly inserted row as JSON
 - The backend maintains a dedicated connection that **LISTENs** on `speed_insert`
 - When a notification arrives, the backend **broadcasts** it to all connected **SSE** clients
 
 This is implemented in:
+
 - Trigger + function: `backend/src/db/migrate.sql`
 - Listener: `backend/src/db/listener.js`
 - SSE broadcast hub: `backend/src/services/sseHub.js`
@@ -73,49 +79,60 @@ This is implemented in:
 ## Data model (Postgres)
 
 Table: `speed_samples`
+
 - `id BIGSERIAL PRIMARY KEY`
 - `ts TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `speed_mps DOUBLE PRECISION NOT NULL`
 - `source TEXT NOT NULL DEFAULT 'unknown'`
 
 Index:
+
 - `idx_speed_samples_ts` on `(ts)` for time-window reads
 
 ## Backend (Node + Express)
 
 ### Environment variables
-- **`PORT`**: HTTP port (default `8080`)
-- **`DATABASE_URL`**: Postgres connection string (required)
+
+- `**PORT*`*: HTTP port (default `8080`)
+- `**DATABASE_URL**`: Postgres connection string (required)
 
 Example: see `backend/.env.example`
 
 ### Startup flow
+
 `backend/index.js` calls `startServer()` which:
+
 - boots Express
 - starts the Postgres LISTEN loop (`LISTEN speed_insert`)
 
 ### REST endpoints
 
 #### Health
+
 `GET /healthz` → `{ "ok": true }`
 
 #### Insert a speed sample
+
 `POST /api/speeds`
 
 Body:
+
 ```json
 { "speed_mps": 12.3, "ts": "2026-04-27T12:34:56.000Z", "source": "api" }
 ```
 
 Notes:
+
 - `speed_mps` is required and must be a number.
 - `ts` is optional; when omitted the DB default `NOW()` is used.
 - `source` defaults to `"api"`.
 
 #### Read recent samples
+
 `GET /api/speeds?limit=60&since=<ISO8601>`
 
 Response:
+
 ```json
 {
   "rows": [
@@ -125,12 +142,15 @@ Response:
 ```
 
 Notes:
+
 - results are returned in chronological order (oldest → newest) for easy plotting.
 
 ### Realtime endpoint (SSE)
+
 `GET /api/stream/speed`
 
 Protocol details:
+
 - Response headers:
   - `Content-Type: text/event-stream`
   - `Cache-Control: no-cache, no-transform`
@@ -140,12 +160,15 @@ Protocol details:
   - `data: <json>`
 
 Example event payload:
+
 ```json
 { "id": 123, "ts": "2026-04-27T12:34:56.000Z", "speed_mps": 7.1, "source": "sim" }
 ```
 
 ### Backend scripts
+
 From `unbox-task/backend`:
+
 - `npm run migrate`
   - Applies schema + trigger from `src/db/migrate.sql`
 - `npm run simulate`
@@ -160,15 +183,17 @@ From `unbox-task/backend`:
     - `DEMO_CLEAR` (default `false`; set `true` to delete existing rows first)
     - `DEMO_SOURCE` (default `demo`)
 
-## Frontend (React CRA)
+## Frontend
 
 ### Environment variables
+
 - `REACT_APP_API_BASE_URL`
   - Defaults to `http://localhost:8080` if not set (see `frontend/src/config.js`)
 
 Example: `frontend/.env.example`
 
 ### Data flow in the UI
+
 - `useSpeedStream()` in `frontend/src/hooks/useSpeedStream.js`:
   - creates `new EventSource(<API_BASE_URL>/api/stream/speed)`
   - listens for `speed` events
@@ -178,12 +203,14 @@ Example: `frontend/.env.example`
   - implements a simple reconnect loop on errors
 
 ### Speedometer rendering
-- `Speedometer` converts \(m/s\) to \(km/h\) (\(km/h = m/s * 3.6\))
+
+- `Speedometer` converts m/s to km/h (km/h = m/s * 3.6)
 - Needle sweep is 270° for an intuitive “dial” feel
 
 ## Running the system
 
-### Docker Compose (recommended for demo)
+### Docker Compose
+
 From repo root:
 
 ```bash
@@ -192,18 +219,21 @@ docker compose up --build
 ```
 
 Services:
+
 - `db`: Postgres 16
 - `backend`: Express API + LISTEN/NOTIFY → SSE broadcaster
 - `simulator`: posts 1Hz speed samples into the backend continuously
 - `frontend`: CRA dev server on port 3000
 
 Open:
+
 - UI: `http://localhost:3000`
 - Backend: `http://localhost:8080/healthz`
 
 ### Local (without docker)
-1) Start Postgres and create the `unbox` DB.
-2) Backend:
+
+1. Start Postgres and create the `unbox` DB.
+2. Backend:
 
 ```bash
 cd /Users/saurabhpowar/unbox-task/backend
@@ -212,7 +242,7 @@ npm run migrate
 npm run start
 ```
 
-3) Frontend:
+1. Frontend:
 
 ```bash
 cd /Users/saurabhpowar/unbox-task/frontend
@@ -220,7 +250,8 @@ cp .env.example .env
 npm start
 ```
 
-4) Start generating data:
+1. Start generating data:
+
 - Infinite live feed:
 
 ```bash
@@ -234,34 +265,4 @@ npm run simulate
 cd /Users/saurabhpowar/unbox-task/backend
 DEMO_CLEAR=true DEMO_SECONDS=120 DEMO_LIVE=true npm run demo:generate
 ```
-
-## Troubleshooting
-
-### UI shows `error` status
-Common causes:
-- backend isn’t reachable at `REACT_APP_API_BASE_URL`
-- backend is up, but SSE endpoint is blocked by a proxy or wrong URL
-
-Checks:
-- open `http://localhost:8080/healthz`
-- open `http://localhost:8080/api/stream/speed` in a browser; you should see an open request (it won’t “render” a page)
-
-### Inserts work but UI doesn’t update
-This indicates the SSE stream isn’t receiving DB notifications.
-
-Checks:
-- ensure migrations ran (trigger exists) via `npm run migrate`
-- ensure backend logs show: `listening for NOTIFY speed_insert`
-
-### DB connects locally but not in docker
-Use the correct `DATABASE_URL`:
-- in docker compose: `postgres://postgres:postgres@db:5432/unbox`
-- locally: `postgres://postgres:postgres@localhost:5432/unbox`
-
-## Notes on production hardening (out of scope for the demo)
-- Add structured logging and request IDs
-- Add auth if exposing beyond local/demo networks
-- Add a proper migration toolchain (or versioned migrations)
-- Add per-client heartbeat/ping events and stronger timeouts
-- Consider a message broker / pubsub for high fanout or multi-backend deployments
 
